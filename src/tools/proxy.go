@@ -124,6 +124,14 @@ func ProxyResponseHandler() func(*http.Response) error {
 
 }
 
+// HealthCheckHandler responds to liveness probes without forwarding the request
+// upstream to CodeArtifact, so probes don't consume auth tokens or depend on AWS.
+func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
 // ProxyInit initialises the CodeArtifact proxy and starts the HTTP listener
 func ProxyInit() {
 	remote, err := url.Parse(CodeArtifactAuthInfo.Url)
@@ -137,6 +145,11 @@ func ProxyInit() {
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 
 	proxy.ModifyResponse = ProxyResponseHandler()
+
+	// Register the health check endpoint first; ServeMux longest-prefix matching
+	// keeps it isolated from the catch-all proxy handler below.
+	healthPath := getEnv("HEALTH_PATH", "/health")
+	http.HandleFunc(healthPath, HealthCheckHandler)
 
 	http.HandleFunc("/", ProxyRequestHandler(proxy))
 	err = http.ListenAndServe(":"+port, nil)
